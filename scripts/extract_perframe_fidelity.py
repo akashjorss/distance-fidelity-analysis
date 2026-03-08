@@ -13,18 +13,17 @@ import os
 import sys
 import json
 import argparse
-import math
 import glob
+import time
 import numpy as np
 import torch
-from pathlib import Path
 
 WORKDIR = "/gpfs/workdir/malhotraa"
 RESULTS_BASE = f"{WORKDIR}/ConMax3D_reproduce/results"
 GSPLAT_DIR = f"{WORKDIR}/gsplat/examples"
 OUTPUT_BASE = f"{RESULTS_BASE}/perframe"
 
-# Add gsplat examples to path for importing simple_trainer utilities
+# Add gsplat examples to path
 sys.path.insert(0, GSPLAT_DIR)
 
 LLFF_SCENES = ["fern", "flower", "fortress", "horns", "leaves", "orchids", "room", "trex"]
@@ -57,7 +56,6 @@ DATASET_CONFIGS = {
 
 
 def get_dataset_for_scene(scene):
-    """Determine which dataset a scene belongs to."""
     if scene in LLFF_SCENES:
         return "llff"
     elif scene in TT_SCENES:
@@ -68,28 +66,19 @@ def get_dataset_for_scene(scene):
 
 
 def find_checkpoint(experiment, scene):
-    """Find the gsplat checkpoint for a given experiment and scene."""
     exp_dir = os.path.join(RESULTS_BASE, experiment, scene)
     if not os.path.isdir(exp_dir):
         return None, None
-
-    # Find gsplat_* subdirectory
     gsplat_dirs = glob.glob(os.path.join(exp_dir, "gsplat_*"))
-    if not gsplat_dirs:
-        return None, None
-
     for gdir in gsplat_dirs:
         ckpt_path = os.path.join(gdir, "ckpts", "ckpt_29999_rank0.pt")
         if os.path.exists(ckpt_path):
-            # Extract method name from gsplat_<method>
             method = os.path.basename(gdir).replace("gsplat_", "")
             return ckpt_path, method
-
     return None, None
 
 
 def find_train_indices(experiment, scene):
-    """Find train indices JSON for a given experiment and scene."""
     exp_dir = os.path.join(RESULTS_BASE, experiment, scene)
     pattern = os.path.join(exp_dir, f"train_indices_{scene}_*.json")
     files = glob.glob(pattern)
@@ -100,41 +89,14 @@ def find_train_indices(experiment, scene):
     return None
 
 
-def compute_psnr(img1, img2):
-    """Compute PSNR between two images."""
-    mse = torch.mean((img1 - img2) ** 2).item()
-    if mse == 0:
-        return float("inf")
-    return -10.0 * math.log10(mse)
-
-
-def compute_ssim(img1, img2, window_size=11):
-    """Compute SSIM between two images (simplified)."""
-    from torchmetrics.image import StructuralSimilarityIndexMeasure
-    ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(img1.device)
-    # Add batch dimension if needed: [C, H, W] -> [1, C, H, W]
-    if img1.dim() == 3:
-        img1 = img1.unsqueeze(0)
-        img2 = img2.unsqueeze(0)
-    return ssim_metric(img1, img2).item()
-
-
-def compute_lpips(img1, img2, lpips_fn):
-    """Compute LPIPS between two images."""
-    if img1.dim() == 3:
-        img1 = img1.unsqueeze(0)
-        img2 = img2.unsqueeze(0)
-    return lpips_fn(img1, img2).item()
-
-
 def extract_perframe(experiment, scene, device="cuda"):
-    """Extract per-frame fidelity metrics for a single experiment/scene pair."""
+    """Extract per-frame fidelity metrics using gsplat's Runner."""
     dataset_name = get_dataset_for_scene(scene)
     if dataset_name is None:
         print(f"Unknown scene: {scene}")
         return None
 
-    cfg = DATASET_CONFIGS[dataset_name]
+    cfg_dict = DATASET_CONFIGS[dataset_name]
     ckpt_path, method = find_checkpoint(experiment, scene)
     if ckpt_path is None:
         print(f"No checkpoint found for {experiment}/{scene}")
@@ -145,89 +107,79 @@ def extract_perframe(experiment, scene, device="cuda"):
         print(f"No train indices found for {experiment}/{scene}")
         return None
 
+    # Check if output already exists
+    out_dir = os.path.join(OUTPUT_BASE, experiment)
+    out_path = os.path.join(out_dir, f"{scene}_fidelity.json")
+    if os.path.exists(out_path):
+        print(f"Already exists: {out_path}, skipping")
+        return None
+
     print(f"Processing {experiment}/{scene} (method={method}, dataset={dataset_name})")
     print(f"  Checkpoint: {ckpt_path}")
-    print(f"  Train indices: {train_indices}")
+    print(f"  Train indices ({len(train_indices)}): {train_indices}")
 
-    # Import gsplat components
-    from simple_trainer import Runner, Config
+    # Build Config and Runner using gsplat's API
+    from simple_trainer import Config, Runner
 
-    # Build config matching the training setup
-    cli_args = [
-        "default",
-        "--data_dir", os.path.join(cfg["data_dir"], scene),
-        "--dataset_type", cfg["dataset_type"],
-        "--data_factor", str(cfg["data_factor"]),
-        "--init_type", cfg["init_type"],
-        "--train_indices", ",".join(map(str, train_indices)),
-        "--result_dir", "/tmp/gsplat_eval_dummy",
-        "--max_steps", "1",
-        "--eval_steps", "1",
-        "--disable_viewer",
-    ]
+    # Create config via dataclass constructor (avoid tyro CLI parsing)
+    config = Config()
+    config.data_dir = os.path.join(cfg_dict["data_dir"], scene)
+    config.data_factor = cfg_dict["data_factor"]
+    config.init_type = cfg_dict["init_type"]
+    config.disable_viewer = True
+    config.result_dir = os.path.join("/tmp", f"gsplat_eval_{experiment}_{scene}")
+    config.max_steps = 1
+    config.eval_steps = [1]
+    config.save_steps = []
 
-    # Parse config
-    cfg_obj = Config()
-    import tyro
-    cfg_obj = tyro.cli(Config, args=cli_args)
-
-    # Create runner and load checkpoint
-    runner = Runner(local_rank=0, world_rank=0, world_size=1, cfg=cfg_obj)
+    # Create runner with train indices
+    train_indices_list = [int(i) for i in train_indices]
+    runner = Runner(
+        local_rank=0, world_rank=0, world_size=1,
+        cfg=config, train_indices=train_indices_list,
+    )
 
     # Load checkpoint
-    ckpt = torch.load(ckpt_path, map_location=device)
-    # The checkpoint contains splat parameters
-    for k, v in ckpt.items():
-        if hasattr(runner, "splats") and k in runner.splats:
-            runner.splats[k] = v.to(device)
-        elif k == "splats":
-            for sk, sv in v.items():
-                runner.splats[sk] = sv.to(device)
+    ckpt = torch.load(ckpt_path, map_location=runner.device)
+    for k in runner.splats.keys():
+        if k in ckpt.get("splats", {}):
+            runner.splats[k].data = ckpt["splats"][k]
+    print(f"  Loaded checkpoint: {len(runner.splats['means'])} Gaussians")
 
-    # Setup LPIPS
-    import lpips as lpips_module
-    lpips_fn = lpips_module.LPIPS(net="alex").to(device)
-
-    # Get test dataset
-    test_dataset = runner.valset
-    n_test = len(test_dataset)
-    print(f"  Test frames: {n_test}")
+    # Run per-frame evaluation
+    valloader = torch.utils.data.DataLoader(
+        runner.valset, batch_size=1, shuffle=False, num_workers=1
+    )
 
     results = []
-    runner.eval()
+    n_test = len(runner.valset)
+    print(f"  Test frames: {n_test}")
 
     with torch.no_grad():
-        for i in range(n_test):
-            data = test_dataset[i]
-            camtoworlds = data["camtoworld"][None].to(device)  # [1, 4, 4]
-            Ks = data["K"][None].to(device)  # [1, 3, 3]
-            width = data["width"]
-            height = data["height"]
-            gt_image = data["image"].to(device)  # [H, W, 3]
+        for i, data in enumerate(valloader):
+            camtoworlds = data["camtoworld"].to(runner.device)
+            Ks = data["K"].to(runner.device)
+            pixels = data["image"].to(runner.device) / 255.0
+            height, width = pixels.shape[1:3]
 
-            # Render
-            renders, _, _ = runner.rasterize_splats(
+            colors, _, _ = runner.rasterize_splats(
                 camtoworlds=camtoworlds,
                 Ks=Ks,
                 width=width,
                 height=height,
+                sh_degree=config.sh_degree,
+                near_plane=config.near_plane,
+                far_plane=config.far_plane,
             )
-            rendered = renders[0]  # [H, W, 3]
+            colors = torch.clamp(colors, 0.0, 1.0)
 
-            # Clamp to [0, 1]
-            rendered = torch.clamp(rendered, 0.0, 1.0)
+            # [1, H, W, 3] -> [1, 3, H, W] for metrics
+            pixels_chw = pixels.permute(0, 3, 1, 2)
+            colors_chw = colors.permute(0, 3, 1, 2)
 
-            # Compute metrics - convert to [C, H, W] for SSIM/LPIPS
-            gt_chw = gt_image.permute(2, 0, 1)
-            rendered_chw = rendered.permute(2, 0, 1)
-
-            psnr = compute_psnr(rendered, gt_image)
-            ssim = compute_ssim(rendered_chw, gt_chw)
-            lpips_val = compute_lpips(
-                rendered_chw * 2 - 1,  # LPIPS expects [-1, 1]
-                gt_chw * 2 - 1,
-                lpips_fn,
-            )
+            psnr = runner.psnr(colors_chw, pixels_chw).item()
+            ssim = runner.ssim(colors_chw, pixels_chw).item()
+            lpips_val = runner.lpips(colors_chw, pixels_chw).item()
 
             frame_result = {
                 "frame_id": i,
@@ -251,6 +203,7 @@ def extract_perframe(experiment, scene, device="cuda"):
         "dataset": dataset_name,
         "method": method,
         "train_indices": train_indices,
+        "n_train": len(train_indices),
         "n_test_frames": n_test,
         "avg_psnr": round(float(avg_psnr), 6),
         "avg_ssim": round(float(avg_ssim), 6),
@@ -258,24 +211,24 @@ def extract_perframe(experiment, scene, device="cuda"):
         "per_frame": results,
     }
 
-    # Save output
-    out_dir = os.path.join(OUTPUT_BASE, experiment)
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{scene}_fidelity.json")
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"  Saved to: {out_path}")
     print(f"  Averages: PSNR={avg_psnr:.4f} SSIM={avg_ssim:.4f} LPIPS={avg_lpips:.4f}")
 
+    # Cleanup temp dir
+    import shutil
+    if os.path.exists(config.result_dir):
+        shutil.rmtree(config.result_dir, ignore_errors=True)
+
     return output
 
 
 def list_experiments():
-    """List available experiments with checkpoints."""
     exp_dirs = sorted(glob.glob(os.path.join(RESULTS_BASE, "v3_*")))
     for exp_dir in exp_dirs:
         exp_name = os.path.basename(exp_dir)
-        # Count scenes with checkpoints
         ckpts = glob.glob(os.path.join(exp_dir, "*/gsplat_*/ckpts/ckpt_29999_rank0.pt"))
         scenes = [os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(c)))) for c in ckpts]
         if scenes:
@@ -284,10 +237,10 @@ def list_experiments():
 
 def main():
     parser = argparse.ArgumentParser(description="Extract per-frame fidelity from gsplat checkpoints")
-    parser.add_argument("--experiment", type=str, help="Experiment directory name (e.g., v3_k15_random)")
-    parser.add_argument("--scene", type=str, help="Scene name (if omitted, process all scenes)")
+    parser.add_argument("--experiment", type=str, help="Experiment directory name")
+    parser.add_argument("--scene", type=str, help="Scene name (if omitted, process all)")
     parser.add_argument("--list", action="store_true", help="List available experiments")
-    parser.add_argument("--device", type=str, default="cuda", help="Device")
+    parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 
     if args.list:
@@ -300,7 +253,6 @@ def main():
     if args.scene:
         scenes = [args.scene]
     else:
-        # Process all scenes that have checkpoints for this experiment
         exp_dir = os.path.join(RESULTS_BASE, args.experiment)
         ckpts = glob.glob(os.path.join(exp_dir, "*/gsplat_*/ckpts/ckpt_29999_rank0.pt"))
         scenes = sorted(set(
