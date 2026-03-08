@@ -1,0 +1,14 @@
+\begin{table}[htbp]
+\centering
+\caption{XGBoost SSIM prediction (5-fold CV)}
+\label{tab:xgboost_ssim}
+\begin{tabular}{lrrr}
+\toprule
+ & $R^2$ & MAE & $\rho$ \\
+\midrule
+All metrics & 0.746 \pm 0.011 & 0.071 \pm 0.002 & 0.841 \pm 0.009 \\
+Original 7 & 0.715 \pm 0.009 & 0.076 \pm 0.003 & 0.825 \pm 0.009 \\
+New 5 & 0.725 \pm 0.018 & 0.074 \pm 0.003 & 0.816 \pm 0.012 \\
+\bottomrule
+\end{tabular}
+\end{table}
