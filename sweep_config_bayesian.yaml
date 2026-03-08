@@ -1,0 +1,15 @@
+program: scripts/conmax3d_sweep.py
+method: bayes
+metric:
+  name: avg_psnr
+  goal: maximize
+run_cap: 60
+parameters:
+  pred_iou_thresh:
+    values: [0.6, 0.7, 0.8, 0.9]
+  min_cluster_factor:
+    values: [0.125, 0.25, 0.333, 0.5]
+  efficientnet_model:
+    values: ['efficientnet_b0', 'efficientnet_b1', 'efficientnet_b2']
+  downscale_factor:
+    values: [2, 4, 8]
