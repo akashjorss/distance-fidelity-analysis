@@ -4,7 +4,7 @@
 ======================================================================
 
 1. DATA OVERVIEW
-   Total rows: 34557
+   Total rows: 33515
    Datasets: ['llff', 'tt']
    Scenes: 16
    Methods: ['fvs', 'fvs_angular', 'fvs_euclidean', 'fvs_plucker', 'infomax', 'infomax_L0246810', 'infomax_L246', 'infomax_L2468', 'infomax_L46810', 'infomax_L48', 'infomax_Lall', 'random', 'random_s123', 'random_s456']
@@ -13,61 +13,61 @@
    Fidelity columns: ['psnr', 'ssim', 'lpips']
 
    Completeness:
-   - psnr: 5026 (14.5%)
-   - FVS (baseline): 33515 (97.0%)
-   - FVS-Pl\"ucker: 33515 (97.0%)
-   - FVS-Angular: 33515 (97.0%)
-   - FVS-Euclidean: 33515 (97.0%)
-   - AlexNet Entropy: 33515 (97.0%)
-   - AlexNet Dist.: 33515 (97.0%)
-   - DINOv2 Dist.: 33515 (97.0%)
-   - CLIP Dist.: 30285 (87.6%)
+   - psnr: 33515 (100.0%)
+   - FVS (baseline): 33515 (100.0%)
+   - FVS-Pl\"ucker: 33515 (100.0%)
+   - FVS-Angular: 33515 (100.0%)
+   - FVS-Euclidean: 33515 (100.0%)
+   - AlexNet Entropy: 33515 (100.0%)
+   - AlexNet Dist.: 33515 (100.0%)
+   - DINOv2 Dist.: 33515 (100.0%)
+   - CLIP Dist.: 30285 (90.4%)
 
 2. SPEARMAN CORRELATIONS (vs PSNR)
-   CLIP Dist.               : ρ=+0.2156  p=6.74e-39  n= 3579  ***
-   FVS-Angular              : ρ=+0.1800  p=2.39e-30  n= 3984  ***
-   FVS (baseline)           : ρ=+0.1730  p=3.94e-28  n= 3984  ***
-   FVS-Euclidean            : ρ=+0.1730  p=3.94e-28  n= 3984  ***
-   FVS-Pl\"ucker            : ρ=+0.1529  p=2.78e-22  n= 3984  ***
-   DINOv2 Dist.             : ρ=+0.1521  p=4.87e-22  n= 3984  ***
-   AlexNet Dist.            : ρ=+0.1416  p=2.74e-19  n= 3984  ***
-   AlexNet Entropy          : ρ=+0.0238  p=1.33e-01  n= 3984  
+   AlexNet Dist.            : ρ=-0.6371  p=0.00e+00  n=33515  ***
+   CLIP Dist.               : ρ=-0.6165  p=0.00e+00  n=30285  ***
+   AlexNet Entropy          : ρ=-0.6049  p=0.00e+00  n=33515  ***
+   FVS-Angular              : ρ=-0.5708  p=0.00e+00  n=33515  ***
+   FVS-Pl\"ucker            : ρ=-0.5665  p=0.00e+00  n=33515  ***
+   FVS (baseline)           : ρ=-0.5570  p=0.00e+00  n=33515  ***
+   FVS-Euclidean            : ρ=-0.5570  p=0.00e+00  n=33515  ***
+   DINOv2 Dist.             : ρ=-0.5513  p=0.00e+00  n=33515  ***
 
-   Geometric metrics avg |ρ|: 0.1697
-   Visual metrics avg |ρ|:    0.1332
-   -> GEOMETRIC metrics are more predictive
+   Geometric metrics avg |ρ|: 0.5628
+   Visual metrics avg |ρ|:    0.6025
+   -> VISUAL metrics are more predictive
 
 3. PER-DATASET CORRELATIONS
 
-   LLFF (4761 frames):
-     CLIP Dist.               : ρ=-0.0548  n=448
-     FVS-Angular              : ρ=-0.3582  n=460
-     FVS (baseline)           : ρ=-0.2659  n=460
-     FVS-Euclidean            : ρ=-0.2659  n=460
-     FVS-Pl\"ucker            : ρ=-0.2734  n=460
+   LLFF (4235 frames):
+     AlexNet Dist.            : ρ=-0.5452  n=4235
+     CLIP Dist.               : ρ=-0.0627  n=4105
+     AlexNet Entropy          : ρ=+0.0176  n=4235
+     FVS-Angular              : ρ=-0.5173  n=4235
+     FVS-Pl\"ucker            : ρ=-0.3681  n=4235
 
-   T\&T (29796 frames):
-     CLIP Dist.               : ρ=+0.1842  n=3131
-     FVS-Angular              : ρ=+0.1665  n=3524
-     FVS (baseline)           : ρ=+0.0668  n=3524
-     FVS-Euclidean            : ρ=+0.0668  n=3524
-     FVS-Pl\"ucker            : ρ=+0.0417  n=3524
+   T\&T (29280 frames):
+     AlexNet Dist.            : ρ=-0.7356  n=29280
+     CLIP Dist.               : ρ=-0.6851  n=26180
+     AlexNet Entropy          : ρ=-0.6327  n=29280
+     FVS-Angular              : ρ=-0.6300  n=29280
+     FVS-Pl\"ucker            : ρ=-0.7088  n=29280
 
 4. NEW vs ORIGINAL METRICS
    Original metrics (5):
-     CLIP Dist.               : ρ=+0.2156
-     FVS (baseline)           : ρ=+0.1730
-     DINOv2 Dist.             : ρ=+0.1521
-     AlexNet Dist.            : ρ=+0.1416
-     AlexNet Entropy          : ρ=+0.0238
+     AlexNet Dist.            : ρ=-0.6371
+     CLIP Dist.               : ρ=-0.6165
+     AlexNet Entropy          : ρ=-0.6049
+     FVS (baseline)           : ρ=-0.5570
+     DINOv2 Dist.             : ρ=-0.5513
    New metrics (3):
-     FVS-Angular              : ρ=+0.1800
-     FVS-Euclidean            : ρ=+0.1730
-     FVS-Pl\"ucker            : ρ=+0.1529
+     FVS-Angular              : ρ=-0.5708
+     FVS-Pl\"ucker            : ρ=-0.5665
+     FVS-Euclidean            : ρ=-0.5570
 
 5. KEY FINDINGS
-   - Best predictor: CLIP Dist. (ρ=+0.2156)
-   - Plucker distance ranks #5 (ρ=+0.1529)
+   - Best predictor: AlexNet Dist. (ρ=-0.6371)
+   - Plucker distance ranks #5 (ρ=-0.5665)
 
 ======================================================================
   END OF REPORT

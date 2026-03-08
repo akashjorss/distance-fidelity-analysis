@@ -107,12 +107,8 @@ def extract_perframe(experiment, scene, device="cuda"):
         print(f"No train indices found for {experiment}/{scene}")
         return None
 
-    # Check if output already exists
     out_dir = os.path.join(OUTPUT_BASE, experiment)
     out_path = os.path.join(out_dir, f"{scene}_fidelity.json")
-    if os.path.exists(out_path):
-        print(f"Already exists: {out_path}, skipping")
-        return None
 
     print(f"Processing {experiment}/{scene} (method={method}, dataset={dataset_name})")
     print(f"  Checkpoint: {ckpt_path}")
@@ -132,12 +128,17 @@ def extract_perframe(experiment, scene, device="cuda"):
     config.eval_steps = [1]
     config.save_steps = []
 
-    # Create runner with train indices
+    # Pass train indices via config string (Runner.__init__ ignores the kwarg
+    # and reads cfg.train_indices instead)
     train_indices_list = [int(i) for i in train_indices]
+    config.train_indices = ",".join(str(i) for i in train_indices_list)
     runner = Runner(
         local_rank=0, world_rank=0, world_size=1,
-        cfg=config, train_indices=train_indices_list,
+        cfg=config,
     )
+
+    # Get global image indices for val frames (needed for matching with distances)
+    val_global_indices = list(runner.valset.indices)
 
     # Load checkpoint
     ckpt = torch.load(ckpt_path, map_location=runner.device)
@@ -182,7 +183,8 @@ def extract_perframe(experiment, scene, device="cuda"):
             lpips_val = runner.lpips(colors_chw, pixels_chw).item()
 
             frame_result = {
-                "frame_id": i,
+                "frame_id": int(val_global_indices[i]),
+                "valset_idx": i,
                 "psnr": round(psnr, 6),
                 "ssim": round(ssim, 6),
                 "lpips": round(lpips_val, 6),
