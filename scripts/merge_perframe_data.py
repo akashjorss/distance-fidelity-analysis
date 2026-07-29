@@ -55,6 +55,14 @@ EXPERIMENT_MAP = {
     "v3_dinov2_L0+2+4+6+8+10_concat": {"method": "infomax_L0246810", "budget": 10},
     "v3_dinov2_L0+1+2+3+4+5+6+7+8+9+10+11_concat": {"method": "infomax_Lall", "budget": 10},
     "v3_dinov2_L10": {"method": "infomax_L10", "budget": 10},
+    # NeRF experiments (all k=10)
+    "v3_nerf_fvs_euclidean": {"method": "fvs_euclidean", "budget": 10},
+    "v3_nerf_fvs_angular": {"method": "fvs_angular", "budget": 10},
+    "v3_nerf_fvs_plucker": {"method": "fvs_plucker", "budget": 10},
+    "v3_nerf_infomax": {"method": "infomax", "budget": 10},
+    "v3_nerf_fvs": {"method": "fvs", "budget": 10},
+    "v3_nerf_lpips_fvs": {"method": "lpips_fvs", "budget": 10},
+    "v3_nerf_random_s42": {"method": "random", "budget": 10},
 }
 
 DISTANCE_COLUMNS = [
@@ -137,7 +145,7 @@ def merge_all(experiments=None, output_path=None):
                 fid_data = json.load(f)
 
             dataset = fid_data.get("dataset", "unknown")
-            backend = "3DGS"
+            backend = fid_data.get("backend", "3DGS")
 
             # Build frame_id -> fidelity map
             fid_map = {}

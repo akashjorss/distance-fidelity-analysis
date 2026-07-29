@@ -2,7 +2,7 @@
 #SBATCH --job-name=pfid
 #SBATCH --output=/gpfs/workdir/malhotraa/ConMax3D_reproduce/logs/pfid_%A_%a.out
 #SBATCH --error=/gpfs/workdir/malhotraa/ConMax3D_reproduce/logs/pfid_%A_%a.err
-#SBATCH --partition=gpu,gpua100
+#SBATCH --partition=gpua100
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G

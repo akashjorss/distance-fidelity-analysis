@@ -51,6 +51,34 @@ def zscore_normalize(df, target="psnr"):
     return df
 
 
+def fill_nerf_distances(df):
+    """Fill NeRF rows' distance columns from matching 3DGS experiments.
+
+    Distance metrics are scene-dependent, not backend-dependent, so we can
+    copy them from 3DGS rows that share the same (method, scene, frame_id, budget).
+    """
+    dist_cols = [c for c in DISTANCE_COLS if c in df.columns]
+    gs = df[df["backend"] == "3DGS"]
+    nerf_mask = df["backend"] == "NeRF"
+
+    if nerf_mask.sum() == 0:
+        return df
+
+    # Build lookup from 3DGS: (method, scene, frame_id, budget) -> distances
+    gs_key = gs.set_index(["method", "scene", "frame_id", "budget"])[dist_cols]
+
+    for idx in df[nerf_mask].index:
+        key = (df.loc[idx, "method"], df.loc[idx, "scene"],
+               df.loc[idx, "frame_id"], df.loc[idx, "budget"])
+        if key in gs_key.index:
+            for c in dist_cols:
+                if pd.isna(df.loc[idx, c]) or df.loc[idx, c] == "":
+                    df.loc[idx, c] = gs_key.loc[key, c]
+
+    return df
+
+
+
 def run_correlations(df, ztarget, outdir):
     """Spearman/Pearson correlations on z-scored target."""
     print("\n" + "="*60)
@@ -485,6 +513,155 @@ def run_cross_dataset(df, ztarget, outdir):
     return rdf
 
 
+def run_backend_comparison(df, ztarget, outdir):
+    """Compare 3DGS vs NeRF: correlations, feature importance, LOSO."""
+    import xgboost as xgb
+
+    backends = df["backend"].unique()
+    if len(backends) < 2:
+        print("\n  Only one backend, skipping comparison")
+        return None
+
+    cols = [c for c in DISTANCE_COLS_DEDUP if df[c].notna().sum() > 100]
+
+    print("\n" + "=" * 60)
+    print("7. BACKEND COMPARISON (3DGS vs NeRF)")
+    print("=" * 60)
+
+    results = {}
+    for backend in sorted(backends):
+        bdf = df[df["backend"] == backend]
+        print(f"\n--- {backend} ({len(bdf)} rows) ---")
+
+        # Correlations
+        print("  Correlations:")
+        corrs = {}
+        for c in cols:
+            valid = bdf.dropna(subset=[c, ztarget])
+            if len(valid) < 10:
+                continue
+            rho, _ = stats.spearmanr(valid[c], valid[ztarget])
+            corrs[c] = rho
+            print(f"    {label(c):20s}: rho={rho:+.4f}")
+
+        # XGBoost
+        features = cols + ["budget"]
+        df_clean = bdf.dropna(subset=[ztarget] + cols).copy()
+        df_clean["budget"] = df_clean["budget"].astype(float)
+
+        if len(df_clean) < 50:
+            print(f"  Too few rows for XGBoost ({len(df_clean)})")
+            continue
+
+        X = df_clean[features].fillna(0)
+        y = df_clean[ztarget].values
+
+        model = xgb.XGBRegressor(
+            n_estimators=300, max_depth=6, learning_rate=0.1,
+            subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0,
+        )
+        model.fit(X, y)
+        imp = dict(zip(features, model.feature_importances_))
+
+        print("  Feature importance:")
+        imp_sorted = sorted(imp.items(), key=lambda x: x[1], reverse=True)
+        for feat, val in imp_sorted:
+            lbl = label(feat) if feat not in ("budget", "scene_id") else feat
+            print(f"    {lbl:20s}: {val:.4f}")
+
+        # LOSO
+        loso_results = []
+        for scene in sorted(df_clean["scene"].unique()):
+            test = df_clean[df_clean["scene"] == scene]
+            train = df_clean[df_clean["scene"] != scene]
+            if len(test) < 5 or len(train) < 20:
+                continue
+            m = xgb.XGBRegressor(
+                n_estimators=300, max_depth=6, learning_rate=0.1,
+                subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0,
+            )
+            m.fit(train[features].fillna(0), train[ztarget].values)
+            pred = m.predict(test[features].fillna(0))
+            y_test = test[ztarget].values
+            ss_res = np.sum((y_test - pred) ** 2)
+            ss_tot = np.sum((y_test - np.mean(y_test)) ** 2)
+            r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+            rho, _ = stats.spearmanr(pred, y_test)
+            loso_results.append({"scene": scene, "r2": r2, "rho": rho})
+
+        loso_df = pd.DataFrame(loso_results)
+        if len(loso_df) > 0:
+            print(f"  LOSO mean R2: {loso_df['r2'].mean():.4f}, rho: {loso_df['rho'].mean():.4f}")
+
+        results[backend] = {
+            "corrs": corrs, "imp": imp_sorted, "loso": loso_df,
+            "n": len(df_clean),
+        }
+
+    # Plot comparison
+    if len(results) == 2:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        backends_list = sorted(results.keys())
+
+        # Correlation comparison
+        ax = axes[0]
+        all_metrics = sorted(set().union(*(results[b]["corrs"].keys() for b in backends_list)))
+        for i, b in enumerate(backends_list):
+            corrs = results[b]["corrs"]
+            vals = [corrs.get(m, 0) for m in all_metrics]
+            labels_m = [label(m) for m in all_metrics]
+            y_pos = np.arange(len(all_metrics))
+            ax.barh(y_pos + i * 0.35 - 0.175, vals, height=0.3,
+                    label=b, color=["steelblue", "coral"][i])
+        ax.set_yticks(np.arange(len(all_metrics)))
+        ax.set_yticklabels(labels_m)
+        ax.set_xlabel("Spearman rho")
+        ax.set_title("Correlations by Backend")
+        ax.legend()
+        ax.axvline(0, color="black", linewidth=0.8)
+
+        # Feature importance comparison
+        ax = axes[1]
+        all_feats = sorted(set().union(*(dict(results[b]["imp"]).keys() for b in backends_list)))
+        for i, b in enumerate(backends_list):
+            imp = dict(results[b]["imp"])
+            vals = [imp.get(f, 0) for f in all_feats]
+            labels_f = [label(f) if f not in ("budget",) else f for f in all_feats]
+            y_pos = np.arange(len(all_feats))
+            ax.barh(y_pos + i * 0.35 - 0.175, vals, height=0.3,
+                    label=b, color=["steelblue", "coral"][i])
+        ax.set_yticks(np.arange(len(all_feats)))
+        ax.set_yticklabels(labels_f)
+        ax.set_xlabel("Feature Importance")
+        ax.set_title("Feature Importance by Backend")
+        ax.legend()
+
+        # LOSO comparison
+        ax = axes[2]
+        all_scenes = sorted(set().union(*(set(results[b]["loso"]["scene"]) for b in backends_list)))
+        for i, b in enumerate(backends_list):
+            ldf = results[b]["loso"]
+            r2_vals = []
+            for s in all_scenes:
+                row = ldf[ldf["scene"] == s]
+                r2_vals.append(row["r2"].values[0] if len(row) > 0 else 0)
+            y_pos = np.arange(len(all_scenes))
+            ax.barh(y_pos + i * 0.35 - 0.175, r2_vals, height=0.3,
+                    label=b, color=["steelblue", "coral"][i])
+        ax.set_yticks(np.arange(len(all_scenes)))
+        ax.set_yticklabels(all_scenes)
+        ax.set_xlabel("R2 (z-scored)")
+        ax.set_title("LOSO R2 by Backend")
+        ax.legend()
+        ax.axvline(0, color="black", linewidth=0.8)
+
+        plt.tight_layout()
+        savefig(fig, os.path.join(outdir, "zscore_backend_comparison"))
+
+    return results
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True)
@@ -498,6 +675,10 @@ def main():
     target = args.target
     df = zscore_normalize(df, target)
     ztarget = f"{target}_z"
+
+    # Fill NeRF distance columns from matching 3DGS rows
+    if "backend" in df.columns:
+        df = fill_nerf_distances(df)
 
     print(f"Loaded {len(df)} rows")
     print(f"Target: {ztarget} (z-score normalized {target})")
@@ -521,6 +702,11 @@ def main():
     # 6. Cross-dataset
     cross_df = run_cross_dataset(df, ztarget, outdir)
 
+    # 7. Backend comparison
+    backend_results = None
+    if "backend" in df.columns:
+        backend_results = run_backend_comparison(df, ztarget, outdir)
+
     # Summary
     print("\n" + "="*60)
     print("SUMMARY (z-scored PSNR)")
@@ -536,6 +722,13 @@ def main():
     cross_domain = cross_df[cross_df["train"] != cross_df["test"]]
     print(f"  Cross-dataset in-domain: R²(z)={in_domain['r2'].mean():.4f}")
     print(f"  Cross-dataset cross:     R²(z)={cross_domain['r2'].mean():.4f}")
+
+    if backend_results:
+        for b, r in backend_results.items():
+            ldf = r["loso"]
+            if len(ldf) > 0:
+                print(f"  Backend {b}: LOSO R2(z)={ldf['r2'].mean():.4f}, "
+                      f"rho={ldf['rho'].mean():.4f}")
 
     print(f"\nAll figures saved to {outdir}")
 
